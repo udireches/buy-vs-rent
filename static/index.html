@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buy vs Rent</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --panel: #ffffff; --text: #1d2330; --muted: #677085;
+    --border: #e2e5eb; --grid: #e9ecf1; --axis: #9aa3b2; --accent: #3b6fd8;
+    --gain: #2e9e5b; --loss: #d64545; --tip-bg: #1d2330; --tip-text: #f6f7f9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --panel: #1a1e26; --text: #e6e9ef; --muted: #8e97a8;
+      --border: #2a303b; --grid: #252b35; --axis: #5b6475; --accent: #6d9bff;
+      --gain: #3fbf74; --loss: #ec5e5e; --tip-bg: #e6e9ef; --tip-text: #12151b;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  header { padding: 20px 24px 0; }
+  h1 { margin: 0 0 4px; font-size: 22px; }
+  .summary { color: var(--muted); }
+  .summary b { color: var(--text); }
+  main {
+    display: grid; grid-template-columns: 320px 1fr; gap: 20px; padding: 20px 24px 24px;
+    align-items: start;
+  }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; }
+  .params { padding: 16px; }
+  .params h2, .chart-card h2 { margin: 0 0 12px; font-size: 15px; }
+  .param { margin-bottom: 12px; }
+  .param .row { display: flex; justify-content: space-between; margin-bottom: 2px; }
+  .param .val { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .param.disabled { opacity: .5; }
+  input[type=range] { width: 100%; accent-color: var(--accent); }
+  .tie { display: flex; gap: 6px; align-items: center; margin: -4px 0 12px; color: var(--muted); }
+  button {
+    font: inherit; color: var(--text); background: var(--bg); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 12px; cursor: pointer;
+  }
+  button:hover { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  .chart-card { padding: 16px; position: sticky; top: 16px; }
+  .legend { display: flex; gap: 16px; color: var(--muted); margin-bottom: 8px; }
+  .legend span::before {
+    content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+    margin-right: 6px; vertical-align: -1px; background: var(--c);
+  }
+  svg { width: 100%; height: auto; display: block; }
+  svg text { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+  .bar { cursor: pointer; transition: opacity .1s; }
+  .bar:hover { opacity: .8; }
+  .pan { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
+  .pan input { flex: 1; }
+  .pan .range { min-width: 92px; text-align: center; color: var(--muted); font-variant-numeric: tabular-nums; }
+  #tip {
+    position: fixed; pointer-events: none; display: none; z-index: 10;
+    background: var(--tip-bg); color: var(--tip-text); border-radius: 8px;
+    padding: 10px 12px; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.25);
+  }
+  #tip table { border-collapse: collapse; }
+  #tip td { padding: 1px 0; font-variant-numeric: tabular-nums; }
+  #tip td:last-child { text-align: right; padding-left: 16px; }
+  #tip .title { font-weight: 700; margin-bottom: 4px; }
+  #tip .adv td { border-top: 1px solid currentColor; padding-top: 4px; font-weight: 700; }
+  @media (max-width: 820px) {
+    header { padding: 16px 16px 0; }
+    main { grid-template-columns: 1fr; padding: 16px; }
+    .chart-card { position: static; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Buy vs Rent</h1>
+  <div class="summary" id="summary">Loading…</div>
+</header>
+<main>
+  <section class="card params">
+    <h2>Parameters</h2>
+    <div id="sliders"></div>
+    <button id="reset">Reset to defaults</button>
+  </section>
+  <section class="card chart-card">
+    <h2>Advantage of buying (buyer net worth − renter net worth)</h2>
+    <div class="legend">
+      <span style="--c: var(--gain)">Buying gains</span>
+      <span style="--c: var(--loss)">Buying loses</span>
+    </div>
+    <svg id="chart" viewBox="0 0 760 280" role="img" aria-label="Advantage of buying by year"></svg>
+    <div class="pan">
+      <button id="prev" aria-label="Earlier years">◀</button>
+      <input id="window" type="range" min="1" value="1" step="1" aria-label="Year window">
+      <button id="next" aria-label="Later years">▶</button>
+      <span class="range" id="range"></span>
+    </div>
+  </section>
+</main>
+<div id="tip"></div>
+
+<script>
+const WINDOW = 15;                       // years visible at once
+const W = 760, H = 280, M = { top: 12, right: 8, bottom: 26, left: 56 };
+const svg = document.getElementById("chart");
+const tip = document.getElementById("tip");
+const panInput = document.getElementById("window");
+
+let defaults = {}, sliders = [], values = {}, rows = [], payment = 0;
+let tieRent = true, seq = 0, timer = null;
+
+const money = v => (v < 0 ? "−$" : "$") + Math.round(Math.abs(v)).toLocaleString();
+const signed = v => (v > 0 ? "+" : "") + money(v);
+const short = v => {
+  const a = Math.abs(v), s = v < 0 ? "−" : "";
+  if (a >= 1e6) return s + "$" + (a / 1e6).toFixed(a >= 1e7 ? 0 : 1) + "M";
+  if (a >= 1e3) return s + "$" + Math.round(a / 1e3) + "K";
+  return s + "$" + Math.round(a);
+};
+const pct = (v, step) => {
+  const d = ((step * 100).toFixed(4).replace(/0+$/, "").split(".")[1] || "").length;
+  return (v * 100).toFixed(Math.max(1, d)) + "%";
+};
+const fmt = s => s.fmt === "%" ? pct(values[s.key], s.step) : money(values[s.key]);
+
+function buildSliders() {
+  const box = document.getElementById("sliders");
+  box.innerHTML = "";
+  for (const s of sliders) {
+    const wrap = document.createElement("div");
+    wrap.className = "param";
+    wrap.id = "p-" + s.key;
+    wrap.innerHTML = `<div class="row"><label for="s-${s.key}">${s.label}</label>
+      <span class="val" id="v-${s.key}"></span></div>
+      <input type="range" id="s-${s.key}" min="${s.min}" max="${s.max}" step="${s.step}">`;
+    box.appendChild(wrap);
+    const input = wrap.querySelector("input");
+    input.value = values[s.key];
+    input.addEventListener("input", () => {
+      values[s.key] = parseFloat(input.value);
+      if (tieRent && s.key === "APPRECIATION") values.RENT_GROWTH = values.APPRECIATION;
+      syncSliders();
+      schedule();
+    });
+    if (s.key === "RENT_GROWTH") {
+      const tie = document.createElement("label");
+      tie.className = "tie";
+      tie.innerHTML = `<input type="checkbox" id="tie"> Rent growth = home appreciation`;
+      box.appendChild(tie);
+      tie.querySelector("input").addEventListener("change", e => {
+        tieRent = e.target.checked;
+        if (tieRent) values.RENT_GROWTH = values.APPRECIATION;
+        syncSliders();
+        schedule();
+      });
+    }
+  }
+}
+
+function syncSliders() {
+  for (const s of sliders) {
+    document.getElementById("s-" + s.key).value = values[s.key];
+    document.getElementById("v-" + s.key).textContent = fmt(s);
+  }
+  document.getElementById("tie").checked = tieRent;
+  document.getElementById("s-RENT_GROWTH").disabled = tieRent;
+  document.getElementById("p-RENT_GROWTH").classList.toggle("disabled", tieRent);
+}
+
+function schedule() {
+  clearTimeout(timer);
+  timer = setTimeout(fetchData, 60);
+}
+
+async function fetchData() {
+  const id = ++seq;
+  const qs = new URLSearchParams(Object.entries(values).map(([k, v]) => [k, String(v)]));
+  const res = await fetch("/api/simulate?" + qs);
+  const data = await res.json();
+  if (id !== seq) return;                // a newer request is on its way
+  rows = data.rows;
+  payment = data.payment;
+  panInput.max = Math.max(1, rows.length - WINDOW + 1);
+  render();
+}
+
+function niceTicks(lo, hi, count = 6) {
+  const span = hi - lo || 1;
+  const raw = span / count, mag = 10 ** Math.floor(Math.log10(raw));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= raw);
+  const ticks = [];
+  for (let t = Math.floor(lo / step) * step; t <= hi + step * 1e-6; t += step) ticks.push(t);
+  return ticks;
+}
+
+function render() {
+  const start = parseInt(panInput.value, 10);
+  const visible = rows.slice(start - 1, start - 1 + WINDOW);
+
+  // Scale to all years so bar heights stay comparable while panning.
+  const advs = rows.map(r => r.advantage);
+  const ticks = niceTicks(Math.min(0, ...advs), Math.max(0, ...advs));
+  const yMin = ticks[0], yMax = ticks[ticks.length - 1];
+  const plotH = H - M.top - M.bottom, plotW = W - M.left - M.right;
+  const y = v => M.top + (yMax - v) / (yMax - yMin || 1) * plotH;
+  const slot = plotW / WINDOW, barW = slot * 0.62;
+
+  let out = "";
+  for (const t of ticks) {
+    out += `<line x1="${M.left}" x2="${W - M.right}" y1="${y(t)}" y2="${y(t)}"
+      stroke="var(--grid)"/><text x="${M.left - 8}" y="${y(t) + 4}" text-anchor="end">${short(t)}</text>`;
+  }
+  visible.forEach((r, i) => {
+    const x = M.left + i * slot + (slot - barW) / 2;
+    const top = Math.min(y(r.advantage), y(0));
+    const h = Math.max(1, Math.abs(y(r.advantage) - y(0)));
+    const color = r.advantage >= 0 ? "var(--gain)" : "var(--loss)";
+    out += `<rect class="bar" data-year="${r.year}" x="${x}" y="${top}" width="${barW}"
+      height="${h}" rx="3" fill="${color}"/>
+      <text x="${x + barW / 2}" y="${H - M.bottom + 14}" text-anchor="middle">${r.year}</text>`;
+  });
+  out += `<line x1="${M.left}" x2="${W - M.right}" y1="${y(0)}" y2="${y(0)}" stroke="var(--axis)"/>`;
+  out += `<text x="${M.left + plotW / 2}" y="${H - 2}" text-anchor="middle">Year</text>`;
+  svg.innerHTML = out;
+
+  const end = start + visible.length - 1;
+  document.getElementById("range").textContent = `Years ${start}–${end}`;
+  document.getElementById("prev").disabled = start <= 1;
+  document.getElementById("next").disabled = start >= parseInt(panInput.max, 10);
+
+  const first = rows.find(r => r.advantage > 0);
+  const last = rows[rows.length - 1];
+  document.getElementById("summary").innerHTML =
+    `Monthly mortgage payment <b>${money(payment)}</b> · ` +
+    `Buying wins from <b>${first ? "year " + first.year : "never"}</b> · ` +
+    `Year ${last.year}: <b>${signed(last.advantage)}</b>`;
+
+  if (hoverYear) {
+    const r = rows.find(r => r.year === hoverYear);
+    if (r && hoverYear >= start && hoverYear <= end) showTip(r); else hideTip();
+  }
+}
+
+let hoverYear = null, lastPos = { x: 0, y: 0 };
+
+function showTip(r) {
+  const lines = [
+    ["Owner cost / yr", money(r.own_cost)],
+    ["Rent cost / yr", money(r.rent_cost)],
+    ["Home value", money(r.home_value)],
+    ["Loan balance", money(r.balance)],
+    ["Buyer net worth", money(r.buyer_nw)],
+    ["Renter net worth", money(r.renter_nw)],
+  ];
+  tip.innerHTML = `<div class="title">Year ${r.year}</div><table>` +
+    lines.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("") +
+    `<tr class="adv"><td>Buy − Rent</td><td>${signed(r.advantage)}</td></tr></table>`;
+  tip.style.display = "block";
+  placeTip();
+}
+
+function placeTip() {
+  const pad = 14, w = tip.offsetWidth, h = tip.offsetHeight;
+  let x = lastPos.x + pad, y = lastPos.y + pad;
+  if (x + w > innerWidth - 8) x = lastPos.x - w - pad;
+  if (y + h > innerHeight - 8) y = lastPos.y - h - pad;
+  tip.style.left = Math.max(8, x) + "px";
+  tip.style.top = Math.max(8, y) + "px";
+}
+
+function hideTip() { hoverYear = null; tip.style.display = "none"; }
+
+svg.addEventListener("mousemove", e => {
+  lastPos = { x: e.clientX, y: e.clientY };
+  const bar = e.target.closest(".bar");
+  if (!bar) return hideTip();
+  hoverYear = parseInt(bar.dataset.year, 10);
+  showTip(rows.find(r => r.year === hoverYear));
+});
+svg.addEventListener("mouseleave", hideTip);
+
+panInput.addEventListener("input", render);
+document.getElementById("prev").onclick = () => { panInput.value = +panInput.value - 1; render(); };
+document.getElementById("next").onclick = () => { panInput.value = +panInput.value + 1; render(); };
+document.getElementById("reset").onclick = () => {
+  values = { ...defaults };
+  tieRent = true;
+  values.RENT_GROWTH = values.APPRECIATION;
+  syncSliders();
+  schedule();
+};
+
+(async () => {
+  const data = await (await fetch("/api/defaults")).json();
+  defaults = data.defaults;
+  sliders = data.sliders;
+  values = { ...defaults };
+  values.RENT_GROWTH = values.APPRECIATION;
+  buildSliders();
+  syncSliders();
+  fetchData();
+})();
+</script>
+</body>
+</html>

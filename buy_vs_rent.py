@@ -10,51 +10,57 @@ housing cost that month invests the difference. Each year we compare:
 """
 
 # ---- Parameters -------------------------------------------------------------
-HOME_PRICE        = 500_000
-DOWN_PCT          = 0.20     # share of price paid up front
-CLOSING_PCT       = 0.03     # buyer closing costs, share of price
-MORTGAGE_RATE     = 0.065    # annual
-MORTGAGE_YEARS    = 30
-PROPERTY_TAX_PCT  = 0.011    # annual, share of current home value
-INSURANCE_PCT     = 0.0035   # annual, share of current home value
-MAINTENANCE_PCT   = 0.01     # annual, share of current home value
-HOA_MONTHLY       = 0
-APPRECIATION      = 0.03     # yearly change in home value
-SELLING_PCT       = 0.06     # agent and transfer costs when selling
-RENT_MONTHLY      = 2_500    # starting rent
-RENT_GROWTH       = 0.03     # yearly rent increase
-RENTERS_INS_MO    = 15
-INVEST_RETURN     = 0.07     # annual return on invested money
+DEFAULTS = {
+    "HOME_PRICE":       500_000,
+    "DOWN_PCT":         0.20,     # share of price paid up front
+    "CLOSING_PCT":      0.03,     # buyer closing costs, share of price
+    "MORTGAGE_RATE":    0.065,    # annual
+    "MORTGAGE_YEARS":   30,
+    "PROPERTY_TAX_PCT": 0.011,    # annual, share of current home value
+    "INSURANCE_PCT":    0.0035,   # annual, share of current home value
+    "MAINTENANCE_PCT":  0.01,     # annual, share of current home value
+    "HOA_MONTHLY":      0,
+    "APPRECIATION":     0.03,     # yearly change in home value
+    "SELLING_PCT":      0.06,     # agent and transfer costs when selling
+    "RENT_MONTHLY":     2_500,    # starting rent
+    "RENT_GROWTH":      0.03,     # yearly rent increase
+    "RENTERS_INS_MO":   15,
+    "INVEST_RETURN":    0.07,     # annual return on invested money
+}
 # -----------------------------------------------------------------------------
 
 
 def monthly_payment(principal, annual_rate, years):
     r, n = annual_rate / 12, years * 12
+    if r == 0:
+        return principal / n
     return principal * r / (1 - (1 + r) ** -n)
 
 
-def simulate():
-    loan = HOME_PRICE * (1 - DOWN_PCT)
-    pmt = monthly_payment(loan, MORTGAGE_RATE, MORTGAGE_YEARS)
-    r_m = MORTGAGE_RATE / 12
-    inv_m = (1 + INVEST_RETURN) ** (1 / 12) - 1
-    app_m = (1 + APPRECIATION) ** (1 / 12) - 1
+def simulate(params=None):
+    p = {**DEFAULTS, **(params or {})}
+    years = int(p["MORTGAGE_YEARS"])
+    loan = p["HOME_PRICE"] * (1 - p["DOWN_PCT"])
+    pmt = monthly_payment(loan, p["MORTGAGE_RATE"], years)
+    r_m = p["MORTGAGE_RATE"] / 12
+    inv_m = (1 + p["INVEST_RETURN"]) ** (1 / 12) - 1
+    app_m = (1 + p["APPRECIATION"]) ** (1 / 12) - 1
+    upkeep_pct = p["PROPERTY_TAX_PCT"] + p["INSURANCE_PCT"] + p["MAINTENANCE_PCT"]
 
     balance = loan
-    home_value = HOME_PRICE
-    rent = RENT_MONTHLY
-    renter_port = HOME_PRICE * (DOWN_PCT + CLOSING_PCT)
+    home_value = p["HOME_PRICE"]
+    rent = p["RENT_MONTHLY"]
+    renter_port = p["HOME_PRICE"] * (p["DOWN_PCT"] + p["CLOSING_PCT"])
     buyer_port = 0.0
     rows = []
 
-    for year in range(1, MORTGAGE_YEARS + 1):
+    for year in range(1, years + 1):
         own_cost_yr = rent_cost_yr = 0.0
         for _ in range(12):
             interest = balance * r_m
             balance -= pmt - interest
-            ownership = (pmt + HOA_MONTHLY + home_value
-                         * (PROPERTY_TAX_PCT + INSURANCE_PCT + MAINTENANCE_PCT) / 12)
-            renting = rent + RENTERS_INS_MO
+            ownership = pmt + p["HOA_MONTHLY"] + home_value * upkeep_pct / 12
+            renting = rent + p["RENTERS_INS_MO"]
             own_cost_yr += ownership
             rent_cost_yr += renting
 
@@ -66,10 +72,10 @@ def simulate():
             else:
                 buyer_port -= diff    # renting costs more, so the buyer invests the gap
             home_value *= 1 + app_m
-        rent *= 1 + RENT_GROWTH
+        rent *= 1 + p["RENT_GROWTH"]
 
         balance = max(balance, 0.0)
-        equity = home_value * (1 - SELLING_PCT) - balance
+        equity = home_value * (1 - p["SELLING_PCT"]) - balance
         buyer_nw = equity + buyer_port
         rows.append((year, own_cost_yr, rent_cost_yr, home_value, balance,
                      buyer_nw, renter_port, buyer_nw - renter_port))
