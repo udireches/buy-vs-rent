@@ -103,8 +103,23 @@ function simulate(params = {}) {
 }
 
 
+/* Buy vs. invest: buy the home as a rental (you live elsewhere) or put the same
+money in the market. RENT_MONTHLY is the rent you collect. Each month the
+landlord pays owner costs and collects rent; a surplus is invested by the
+landlord, a shortfall is paid from pocket and the market investor invests the
+same amount. That is the buy-vs-rent cash flow with no renter's insurance, and
+where you live yourself costs the same in both cases, so it cancels out.
+
+  Property net worth = home value * (1 - selling cost) - mortgage balance + invested surplus
+  Market net worth   = (down payment + closing costs) invested + invested shortfalls
+*/
+function simulateInvest(params = {}) {
+  return simulate({ ...params, RENTERS_INS_MO: 0 });
+}
+
+
 if (typeof module !== "undefined") {
-  module.exports = { DEFAULTS, SLIDERS, monthlyPayment, simulate };
+  module.exports = { DEFAULTS, SLIDERS, monthlyPayment, simulate, simulateInvest };
 
   // Run directly with Node to print the same table as `python3 buy_vs_rent.py`.
   if (require.main === module) {
